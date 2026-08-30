@@ -1,5 +1,16 @@
 # AURORA TRACE
 
+> 当前升级版入口 / Current upgraded entry: `web/console.html` 由 `python aurora.py` 在 `/` 提供。
+
+本项目当前将自己定义为“面向软件工程任务的证据驱动型 Coding Agent 实验平台”，重点不是让模型生成更多代码，而是让每一次决策、工具调用、文件变更和测试结果都能被解释、验证、追溯和回放。
+
+升级后的核心材料：
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)：分层架构、事件结构和系统边界；
+- [EVALUATION.md](EVALUATION.md)：可复现实验协议、负向控制和消融设计；
+- [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)：关键工程决策与取舍；
+- [PROGRESS.md](PROGRESS.md)：真实已完成能力与明确未实现能力。
+
 > Evidence-first local coding agent — 一个可审计、可回放的本地编程智能体。
 
 AURORA TRACE 通过 OpenAI 兼容模型接口理解编程任务，自主调用本地文件与命令工具，在隔离的任务工作区中完成修改，并实时生成一条可回放的证据链：`决策 → 工具 → 结果 → 验证`。
