@@ -44,7 +44,15 @@ PROJECT_LOCK = threading.Lock()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 PROJECT_INDEX = ROOT / "projects.json"
 IGNORED_DIRS = {"__pycache__", ".git", ".idea", ".vscode", ".venv", "venv", "node_modules", "dist", "build"}
-RUN_SCHEMA_VERSION = 1
+RUN_SCHEMA_VERSION = 2
+MAX_CONTEXT_CHARS = 24000
+TASK_TYPES = {"repair", "feature", "refactor", "change"}
+APPROVAL_MODES = {"auto", "manual"}
+TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED"}
+
+
+class RunCancelled(Exception):
+    """Cooperative cancellation signal used between Agent control steps."""
 
 
 def now() -> str:
@@ -53,6 +61,20 @@ def now() -> str:
 
 def timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def infer_task_type(task: str, requested: str | None = None) -> str:
+    """Classify the contract without asking the model to self-certify it."""
+    if requested in TASK_TYPES:
+        return requested
+    text = (task or "").lower()
+    if any(token in text for token in ("bug", "fix", "debug", "故障", "错误", "缺陷", "修复")):
+        return "repair"
+    if any(token in text for token in ("refactor", "重构", "重写", "整理结构", "迁移")):
+        return "refactor"
+    if any(token in text for token in ("feature", "implement", "add ", "新增", "增加", "添加", "实现", "支持")):
+        return "feature"
+    return "change"
 
 
 def safe_path(workspace: Path, relative: str) -> Path:
@@ -182,8 +204,9 @@ class ToolExecutor:
 
     ALLOWED_PREFIXES = ("python", "pytest", "npm", "node")
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, cancel_check: Any | None = None):
         self.workspace = workspace
+        self.cancel_check = cancel_check or (lambda: False)
 
     def list_files(self, path: str = ".") -> dict[str, Any]:
         root = safe_path(self.workspace, path)
@@ -243,16 +266,27 @@ class ToolExecutor:
         for token in parts[1:]:
             if os.path.isabs(token) or (len(token) > 1 and token[1] == ":"):
                 raise ValueError("absolute command paths are disabled")
-        try:
-            proc = subprocess.run(
-                parts, cwd=self.workspace, capture_output=True, text=True,
-                timeout=20, shell=False
-            )
-        except subprocess.TimeoutExpired as exc:
-            output = ((exc.stdout or "") + (exc.stderr or "")).strip()
-            return {"command": command, "returncode": -1, "output": output[-6000:],
-                    "ok": False, "timed_out": True}
-        output = (proc.stdout + proc.stderr).strip()
+        proc = subprocess.Popen(
+            parts, cwd=self.workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, shell=False
+        )
+        deadline = time.monotonic() + 20
+        while proc.poll() is None:
+            if self.cancel_check():
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                output = (stdout + stderr).strip()
+                return {"command": command, "returncode": -1, "output": output[-6000:],
+                        "ok": False, "cancelled": True}
+            if time.monotonic() >= deadline:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                output = (stdout + stderr).strip()
+                return {"command": command, "returncode": -1, "output": output[-6000:],
+                        "ok": False, "timed_out": True}
+            time.sleep(0.05)
+        stdout, stderr = proc.communicate()
+        output = (stdout + stderr).strip()
         return {"command": command, "returncode": proc.returncode,
                 "output": output[-6000:], "ok": proc.returncode == 0}
 
@@ -367,6 +401,11 @@ def run_snapshot(run: dict[str, Any]) -> dict[str, Any]:
         "run_id": run["id"],
         "task": run["task"],
         "mode": run["mode"],
+        "approval_mode": run.get("approval_mode", "auto"),
+        "pending_approval": run.get("pending_approval"),
+        "cancel_requested": run.get("cancel_requested", False),
+        "tool_call_count": run.get("tool_call_count", 0),
+        "task_type": run.get("task_type", run.get("contract", {}).get("task_type", "change")),
         "project": run.get("project", {}),
         "state": run["state"],
         "summary": run.get("summary", ""),
@@ -390,13 +429,26 @@ def persist_run(run: dict[str, Any]) -> None:
     state_path = run.get("state_path")
     if not state_path:
         return
-    with run["lock"]:
-        run["updated_at"] = timestamp()
-        snapshot = run_snapshot(run)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = state_path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, state_path)
+    persist_lock = run.setdefault("persist_lock", threading.Lock())
+    with persist_lock:
+        with run["lock"]:
+            run["updated_at"] = timestamp()
+            snapshot = run_snapshot(run)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = state_path.with_name(
+            f".{state_path.name}.{threading.get_ident()}.tmp"
+        )
+        temporary.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        for attempt in range(4):
+            try:
+                os.replace(temporary, state_path)
+                break
+            except PermissionError:
+                if attempt == 3:
+                    raise
+                time.sleep(0.02 * (2 ** attempt))
 
 
 def load_run_history() -> None:
@@ -409,11 +461,19 @@ def load_run_history() -> None:
             snapshot = json.loads(state_path.read_text(encoding="utf-8"))
             run_id = snapshot["run_id"]
             run_dir = state_path.parent
+            workspace = run_dir / "workspace"
+            if not workspace.is_dir():
+                workspace = run_dir
             RUNS[run_id] = {
                 "id": run_id,
                 "task": snapshot.get("task", ""),
                 "mode": snapshot.get("mode", "mock"),
-                "workspace": run_dir,
+                "approval_mode": snapshot.get("approval_mode", "auto"),
+                "pending_approval": snapshot.get("pending_approval"),
+                "cancel_requested": snapshot.get("cancel_requested", False),
+                "tool_call_count": snapshot.get("tool_call_count", 0),
+                "task_type": snapshot.get("task_type", snapshot.get("contract", {}).get("task_type", "change")),
+                "workspace": workspace,
                 "events": snapshot.get("events", []),
                 "ledger": snapshot.get("ledger", []),
                 "diffs": snapshot.get("diffs", []),
@@ -432,6 +492,8 @@ def load_run_history() -> None:
                 "trust_score": snapshot.get("trust_score", 0),
                 "boundary_violations": snapshot.get("boundary_violations", 0),
                 "last_event_id": snapshot.get("last_event_id"),
+                "approval_condition": threading.Condition(threading.Lock()),
+                "persist_lock": threading.Lock(),
             }
         except (OSError, KeyError, TypeError, json.JSONDecodeError):
             continue
@@ -442,7 +504,8 @@ def emit(run: dict[str, Any], kind: str, title: str, detail: str = "",
          phase: str | None = None, action: str | None = None,
          evidence_type: str | None = None, verification_status: str = "pending",
          affected_files: list[str] | None = None,
-         parent_event_id: int | None = None) -> int:
+         parent_event_id: int | None = None, input_value: Any = None,
+         output_value: Any = None) -> int:
     """Append a human-readable event and a causal, durable ledger record."""
     event = {
         "id": len(run["events"]) + 1,
@@ -459,6 +522,8 @@ def emit(run: dict[str, Any], kind: str, title: str, detail: str = "",
         "verification_status": verification_status,
         "affected_files": affected_files or [],
         "parent_event_id": parent_event_id,
+        "input": input_value,
+        "output": output_value,
         "payload": payload,
         "status": status,
     }
@@ -477,6 +542,64 @@ def emit(run: dict[str, Any], kind: str, title: str, detail: str = "",
 def compact(value: Any, limit: int = 420) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _message_chars(messages: list[dict[str, Any]]) -> int:
+    return sum(len(str(message.get("content", ""))) for message in messages)
+
+
+def _compact_message_content(content: Any, limit: int = 420) -> str:
+    """Keep verification facts while dropping bulky source/output text."""
+    if not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False)
+    try:
+        parsed = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        keys = ("ok", "tool", "phase", "command", "returncode", "timed_out",
+                "error", "path", "changed", "added_lines", "removed_lines")
+        summary = {key: parsed[key] for key in keys if key in parsed}
+        if isinstance(parsed.get("output"), str):
+            summary["output_tail"] = parsed["output"][-160:]
+        if isinstance(parsed.get("content"), str):
+            summary["content_excerpt"] = compact(parsed["content"], 160)
+        return "[compacted evidence] " + json.dumps(summary, ensure_ascii=False)
+    if len(content) <= limit:
+        return content
+    head = max(80, limit // 2)
+    tail = max(60, limit - head - 24)
+    return content[:head] + " … [content compacted] … " + content[-tail:]
+
+
+def apply_context_budget(messages: list[dict[str, Any]],
+                         max_chars: int = MAX_CONTEXT_CHARS,
+                         preserve_recent: int = 6) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
+    """Compact old model/tool content without removing causal message structure."""
+    before = _message_chars(messages)
+    if before <= max_chars:
+        return messages, {"compacted": False, "before_chars": before,
+                          "after_chars": before, "messages_compacted": 0}
+    result = [dict(message) for message in messages]
+    cutoff = max(2, len(result) - preserve_recent)
+    compacted_count = 0
+    for index, message in enumerate(result):
+        if index < 2 or index >= cutoff:
+            continue
+        if isinstance(message.get("content"), str):
+            message["content"] = _compact_message_content(message["content"], 420)
+            compacted_count += 1
+    after = _message_chars(result)
+    if after > max_chars:
+        for index, message in enumerate(result):
+            if index < 2 or not isinstance(message.get("content"), str):
+                continue
+            if message.get("role") == "tool" or index < cutoff:
+                message["content"] = _compact_message_content(message["content"], 220)
+                compacted_count += 1
+        after = _message_chars(result)
+    return result, {"compacted": True, "before_chars": before,
+                    "after_chars": after, "messages_compacted": compacted_count}
 
 
 class ModelAdapter:
@@ -511,23 +634,6 @@ class ModelAdapter:
         return {"type": "finish", "summary": message.get("content", "task finished")}
 
 
-def mock_steps_legacy() -> list[dict[str, Any]]:
-    todo = """\"\"\"Tiny Todo domain used by the AURORA TRACE demonstration.\"\"\"\n\n\nclass TodoList:\n    def __init__(self, items=None):\n        self.items = list(items or [])\n\n    def add(self, title):\n        self.items.append({\"title\": title, \"done\": False})\n\n    def remove(self, index):\n        if 0 <= index < len(self.items):\n            return self.items.pop(index)\n        return None\n\n    def completed(self):\n        return [item for item in self.items if item[\"done\"]]\n"""
-    return [
-        {"kind": "state", "title": "Task understood", "detail": "定位删除功能与边界验收条件", "state": "UNDERSTAND"},
-        {"kind": "tool", "tool": "list_files", "arguments": {"path": "."}, "reason": "先建立项目地图"},
-        {"kind": "tool", "tool": "read_file", "arguments": {"path": "todo.py"}, "reason": "读取业务逻辑"},
-        {"kind": "tool", "tool": "read_file", "arguments": {"path": "tests/test_todo.py"}, "reason": "确认测试与验收标准"},
-        {"kind": "state", "title": "Acceptance contract locked", "detail": "删除最后一项、保留非法索引安全行为、回归测试通过", "state": "PLAN"},
-        {"kind": "state", "title": "Execution started", "detail": "进入受控工具执行阶段", "state": "EXECUTE"},
-        {"kind": "tool", "tool": "run_command", "arguments": {"command": "python -m unittest discover -s tests -v"}, "reason": "先复现现有故障，建立修改前证据", "phase": "baseline"},
-        {"kind": "tool", "tool": "replace_text", "arguments": {"path": "todo.py", "old": "if 0 <= index < len(self.items) - 1:", "new": "if 0 <= index < len(self.items):"}, "reason": "使用单一精确替换，控制补丁影响面", "phase": "patch"},
-        {"kind": "tool", "tool": "run_command", "arguments": {"command": "python -m unittest discover -s tests -v"}, "reason": "用真实测试验证修改"},
-        {"kind": "state", "title": "Verification gate passed", "detail": "修改前故障已复现，修改后 5 个测试全部通过，证据链闭合", "state": "VERIFY"},
-        {"kind": "finish", "summary": "已修复 Todo 删除边界 Bug，并通过全部 5 项单元测试。"},
-    ]
-
-
 def mock_steps() -> list[dict[str, Any]]:
     """Deterministic fixture for the no-key demonstration path."""
     return [
@@ -560,31 +666,25 @@ def mock_steps() -> list[dict[str, Any]]:
     ]
 
 
-def contract_for_legacy(task: str, project: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
-        "goal": task,
-        "checks": ["baseline_failure_captured", "minimal_patch_recorded",
-                    "regression_tests_passed", "workspace_boundary_respected"],
-        "gate_definitions": {
-            "baseline_failure_captured": {"weight": 25, "label": "复现基线故障"},
-            "minimal_patch_recorded": {"weight": 25, "label": "记录最小补丁"},
-            "regression_tests_passed": {"weight": 25, "label": "回归测试通过"},
-            "workspace_boundary_respected": {"weight": 25, "label": "未越过工作区边界"},
-        },
-        "risk": "LOW · isolated workspace / allowlisted commands",
-        "project": (project or {}).get("name", "Unknown project"),
-    }
-
-
-def contract_for(task: str, project: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Create the explicit evidence contract used by the current controller."""
+def contract_for(task: str, project: dict[str, Any] | None = None,
+                 task_type: str | None = None) -> dict[str, Any]:
+    """Create a task-aware contract without allowing the model to weaken it."""
+    resolved_type = infer_task_type(task, task_type)
+    baseline_failure_required = resolved_type == "repair"
     checks = ["baseline_failure_captured", "minimal_patch_recorded",
               "regression_tests_passed", "workspace_boundary_respected"]
+    baseline_label = "复现基线故障" if baseline_failure_required else "记录基线状态"
+    baseline_policy = "observe_failure" if baseline_failure_required else "establish_green_baseline"
     return {
         "goal": task,
+        "task_type": resolved_type,
+        "task_type_label": {"repair": "Bug 修复", "feature": "功能新增",
+                             "refactor": "结构重构", "change": "一般变更"}[resolved_type],
+        "baseline_policy": baseline_policy,
         "checks": checks,
         "gate_definitions": {
-            "baseline_failure_captured": {"weight": 25, "label": "复现基线故障"},
+            "baseline_failure_captured": {"weight": 25, "label": baseline_label,
+                                           "policy": baseline_policy},
             "minimal_patch_recorded": {"weight": 25, "label": "记录最小补丁"},
             "regression_tests_passed": {"weight": 25, "label": "回归测试通过"},
             "workspace_boundary_respected": {"weight": 25, "label": "未越过工作区边界"},
@@ -613,21 +713,33 @@ def phase_for_tool(run: dict[str, Any], tool: str, requested: str | None = None)
     return "context"
 
 
-def evidence_for_phase(phase: str | None) -> str | None:
-    return {"baseline": "baseline_failure", "patch": "minimal_patch",
-            "regression": "regression_test", "gate": "acceptance_gate"}.get(phase)
+def evidence_for_phase(phase: str | None, run: dict[str, Any] | None = None) -> str | None:
+    if phase == "baseline":
+        policy = (run or {}).get("contract", {}).get("baseline_policy", "observe_failure")
+        return "baseline_failure" if policy == "observe_failure" else "baseline_status"
+    return {"patch": "minimal_patch", "regression": "regression_test",
+            "gate": "acceptance_gate"}.get(phase)
 
 
 def update_evidence_score(run: dict[str, Any]) -> None:
     events = run["events"]
-    baseline = any(
-        e.get("kind") in {"tool_result", "error"}
+    baseline_events = [
+        e for e in events
+        if e.get("kind") in {"tool_result", "error"}
         and e.get("tool") == "run_command"
         and isinstance(e.get("payload"), dict)
         and e.get("payload", {}).get("phase") == "baseline"
-        and e.get("payload", {}).get("ok") is False
-        for e in events
+    ]
+    baseline_failure = any(
+        e.get("payload", {}).get("ok") is False
+        for e in baseline_events
     )
+    baseline_green = any(
+        e.get("payload", {}).get("ok") is True
+        for e in baseline_events
+    )
+    baseline_policy = run.get("contract", {}).get("baseline_policy", "observe_failure")
+    baseline = baseline_failure if baseline_policy == "observe_failure" else baseline_green
     patched = any(isinstance(diff, str) and bool(diff.strip()) for diff in run.get("diffs", []))
     verified = any(
         e.get("kind") == "tool_result"
@@ -642,14 +754,15 @@ def update_evidence_score(run: dict[str, Any]) -> None:
                        "minimal_patch_recorded": patched,
                        "regression_tests_passed": verified,
                        "workspace_boundary_respected": boundary_ok}
-    reasons = {"baseline_failure_captured": "已观察到修改前测试失败",
-               "minimal_patch_recorded": "已生成非空 unified diff",
-               "regression_tests_passed": "修改后回归命令返回成功",
-               "workspace_boundary_respected": "没有文件或命令越过隔离工作区"}
-    reasons = {"baseline_failure_captured": "已观察到修改前测试失败",
-               "minimal_patch_recorded": "已生成非空 unified diff",
-               "regression_tests_passed": "修改后回归命令返回成功",
-               "workspace_boundary_respected": "没有文件或命令越过隔离工作区"}
+    reasons = {
+        "baseline_failure_captured": (
+            "已观察到修改前测试失败" if baseline_policy == "observe_failure"
+            else "已确认修改前测试基线为绿色"
+        ),
+        "minimal_patch_recorded": "已生成非空 unified diff",
+        "regression_tests_passed": "修改后回归命令返回成功",
+        "workspace_boundary_respected": "没有文件或命令越过隔离工作区",
+    }
     definitions = run.get("contract", {}).get("gate_definitions", {})
     run["evidence_details"] = {
         key: {"passed": value,
@@ -663,22 +776,11 @@ def update_evidence_score(run: dict[str, Any]) -> None:
     )
 
 
-def missing_evidence_legacy(run: dict[str, Any]) -> list[str]:
-    update_evidence_score(run)
-    labels = {"baseline_failure_captured": "基线故障",
-              "minimal_patch_recorded": "最小补丁",
-              "regression_tests_passed": "回归测试",
-              "workspace_boundary_respected": "工作区边界"}
-    return [labels[key] for key, passed in run["evidence"].items() if not passed]
-
-
 def missing_evidence(run: dict[str, Any]) -> list[str]:
     update_evidence_score(run)
-    labels = {"baseline_failure_captured": "基线故障",
-              "minimal_patch_recorded": "最小补丁",
-              "regression_tests_passed": "回归测试",
-              "workspace_boundary_respected": "工作区边界"}
-    return [labels[key] for key, passed in run["evidence"].items() if not passed]
+    definitions = run.get("contract", {}).get("gate_definitions", {})
+    return [definitions.get(key, {}).get("label", key)
+            for key, passed in run["evidence"].items() if not passed]
 
 
 def complete_run(run: dict[str, Any], summary: str) -> bool:
@@ -704,15 +806,116 @@ def complete_run(run: dict[str, Any], summary: str) -> bool:
     return True
 
 
+def _approval_condition(run: dict[str, Any]) -> threading.Condition:
+    return run.setdefault("approval_condition", threading.Condition(threading.Lock()))
+
+
+def is_cancel_requested(run: dict[str, Any]) -> bool:
+    with _approval_condition(run):
+        return bool(run.get("cancel_requested", False))
+
+
+def ensure_run_active(run: dict[str, Any]) -> None:
+    if is_cancel_requested(run):
+        raise RunCancelled("run cancelled by user")
+
+
+def request_cancel(run: dict[str, Any]) -> bool:
+    condition = _approval_condition(run)
+    with condition:
+        if run.get("finished") or run.get("state") in TERMINAL_STATES:
+            return False
+        run["cancel_requested"] = True
+        run["state"] = "CANCELLED"
+        run["summary"] = "Run cancelled by user"
+        run["pending_approval"] = None
+        condition.notify_all()
+    event_id = emit(run, "cancel", "Run cancellation requested",
+                    "The current Agent step will stop cooperatively.", phase="lifecycle",
+                    evidence_type="cancellation", verification_status="observed",
+                    status="done", parent_event_id=run.get("last_event_id"))
+    run["last_event_id"] = event_id
+    persist_run(run)
+    return True
+
+
+def resolve_approval(run: dict[str, Any], decision: str) -> bool:
+    if decision not in {"approve", "reject"}:
+        raise ValueError("approval decision must be approve or reject")
+    condition = _approval_condition(run)
+    with condition:
+        pending = run.get("pending_approval")
+        if not pending:
+            return False
+        run["_approval_result"] = decision
+        run["pending_approval"] = None
+        if not run.get("cancel_requested"):
+            run["state"] = run.pop("approval_resume_state", "EXECUTE")
+        condition.notify_all()
+    event_id = emit(run, "approval", "Tool approval granted" if decision == "approve" else "Tool approval rejected",
+                    f"Human decision: {decision}.", tool=pending.get("tool"), phase=pending.get("phase"),
+                    action="resolve_tool_approval", evidence_type="permission_decision",
+                    verification_status="passed" if decision == "approve" else "failed",
+                    status="done" if decision == "approve" else "failed",
+                    affected_files=[pending["arguments"].get("path")] if isinstance(pending.get("arguments", {}).get("path"), str) else [],
+                    parent_event_id=pending.get("event_id"), input_value=pending.get("arguments"),
+                    output_value={"decision": decision})
+    run["last_event_id"] = event_id
+    persist_run(run)
+    return True
+
+
+def wait_for_approval(run: dict[str, Any], tool: str, arguments: dict[str, Any],
+                      phase: str, parent_event_id: int | None = None) -> str:
+    if run.get("approval_mode", "auto") == "auto":
+        return "approved"
+    ensure_run_active(run)
+    condition = _approval_condition(run)
+    with condition:
+        run["approval_resume_state"] = run.get("state", "EXECUTE")
+        run["pending_approval"] = {
+            "tool": tool, "arguments": arguments, "phase": phase,
+            "requested_at": timestamp(),
+        }
+        run["_approval_result"] = None
+        run["state"] = "WAITING_APPROVAL"
+    request_event_id = emit(
+        run, "approval", "Approval required",
+        "This operation is waiting for human approval before execution.", tool=tool,
+        phase=phase, action="request_tool_approval", evidence_type="permission_request",
+        verification_status="pending", status="active", parent_event_id=parent_event_id,
+        affected_files=[arguments.get("path")] if isinstance(arguments.get("path"), str) else [],
+        input_value=arguments,
+    )
+    with condition:
+        if run.get("pending_approval") is not None:
+            run["pending_approval"]["event_id"] = request_event_id
+        run["last_event_id"] = request_event_id
+    persist_run(run)
+    with condition:
+        while run.get("_approval_result") is None and not run.get("cancel_requested"):
+            condition.wait(timeout=0.5)
+        if run.get("cancel_requested"):
+            return "cancelled"
+        return run.pop("_approval_result", "reject")
+
+
 def execute_agent_tool(run: dict[str, Any], registry: ToolRegistry, tool: str,
                        arguments: dict[str, Any], reason: str = "",
                        requested_phase: str | None = None) -> dict[str, Any]:
     """Run one tool through the registry and connect decision to result."""
+    ensure_run_active(run)
     phase = phase_for_tool(run, tool, requested_phase)
     if phase == "baseline" and tool == "run_command":
+        baseline_policy = run.get("contract", {}).get("baseline_policy", "observe_failure")
+        baseline_detail = (
+            "Run the pre-patch verification command to observe the failure before editing."
+            if baseline_policy == "observe_failure"
+            else "Run the pre-patch verification command to establish a green baseline before editing."
+        )
         hypothesis_id = emit(
             run, "hypothesis", "Baseline hypothesis formed",
-            "Run the pre-patch verification command to observe the failure before editing.",
+            baseline_detail,
             tool=tool, phase="baseline", action="form_baseline_hypothesis",
             evidence_type="baseline_hypothesis", verification_status="pending",
             parent_event_id=run.get("last_event_id"), status="active"
@@ -723,10 +926,22 @@ def execute_agent_tool(run: dict[str, Any], registry: ToolRegistry, tool: str,
     decision_id = emit(
         run, "decision", f"Selected {tool}", reason, tool=tool,
         payload=decision_payload, phase=phase, action=f"select_{tool}",
-        evidence_type=evidence_for_phase(phase), parent_event_id=run.get("last_event_id"),
-        status="active"
+        evidence_type=evidence_for_phase(phase, run), parent_event_id=run.get("last_event_id"),
+        status="active", input_value=arguments
     )
-    result = registry.execute(tool, arguments)
+    run["tool_call_count"] = run.get("tool_call_count", 0) + 1
+    requires_approval = tool in {"write_file", "replace_text", "run_command"}
+    approval = (wait_for_approval(run, tool, arguments, phase, decision_id)
+                if requires_approval else "approved")
+    if approval == "cancelled":
+        raise RunCancelled("run cancelled while waiting for tool approval")
+    if approval == "reject":
+        result = {"ok": False, "tool": tool,
+                  "error": "operation rejected by human approval",
+                  "approval_rejected": True}
+    else:
+        ensure_run_active(run)
+        result = registry.execute(tool, arguments)
     result["phase"] = phase
     if result.get("diff"):
         run["diffs"].append(result["diff"])
@@ -742,93 +957,26 @@ def execute_agent_tool(run: dict[str, Any], registry: ToolRegistry, tool: str,
         f"{tool} returned" if result.get("ok") else f"{tool} blocked",
         compact(result.get("output") or result.get("content") or result),
         tool=tool, payload=result, phase=phase, action=f"execute_{tool}",
-        evidence_type=evidence_for_phase(phase),
+        evidence_type=evidence_for_phase(phase, run),
         verification_status="passed" if result.get("ok") else "failed",
         affected_files=affected_files, parent_event_id=decision_id,
-        status="done" if result.get("ok") else "failed"
+        status="done" if result.get("ok") else "failed",
+        input_value=arguments, output_value=result
     )
     run["last_event_id"] = result_id
     update_evidence_score(run)
+    if result.get("cancelled"):
+        raise RunCancelled("run cancelled while command was running")
     return result
-
-
-def run_agent_legacy(run: dict[str, Any], mode: str):
-    try:
-        run["state"] = "UNDERSTAND"
-        emit(run, "system", "Run initialized", "隔离工作区已创建 · Evidence Ledger 已启动", status="done")
-        update_evidence_score(run)
-        if mode == "mock":
-            steps = mock_steps()
-            executor = ToolExecutor(run["workspace"])
-            for step in steps:
-                time.sleep(0.48)
-                if step["kind"] == "state":
-                    run["state"] = step["state"]
-                    emit(run, "state", step["title"], step["detail"], status="done")
-                elif step["kind"] == "finish":
-                    run["state"] = "COMPLETED"
-                    run["summary"] = step["summary"]
-                    emit(run, "finish", "Task completed", step["summary"], status="done")
-                else:
-                    tool = step["tool"]
-                    args = step["arguments"]
-                    decision_payload = dict(args)
-                    if step.get("phase"):
-                        decision_payload["phase"] = step["phase"]
-                    emit(run, "decision", f"Selected {tool}", step["reason"], tool=tool, payload=decision_payload, status="active")
-                    try:
-                        result = executor.call(tool, args)
-                        if step.get("phase"):
-                            result["phase"] = step["phase"]
-                        detail = compact(result.get("output") or result.get("content") or result)
-                        emit(run, "tool_result", f"{tool} returned", detail, tool=tool, payload=result, status="done")
-                        if result.get("diff"):
-                            run["diffs"].append(result["diff"])
-                        update_evidence_score(run)
-                    except Exception as exc:
-                        emit(run, "error", f"{tool} blocked", str(exc), tool=tool, status="failed")
-        else:
-            messages = [{"role": "system", "content": (
-                "You are AURORA TRACE, an evidence-first local coding agent. "
-                "Work only through the provided tools. First inspect the repository, "
-                "capture a baseline test result when tests exist, make the smallest "
-                "safe patch, run regression verification, and only then finish. "
-                "Return one tool call at a time. Never claim success without evidence."
-            )}]
-            messages.append({"role": "user", "content": (
-                f"Project profile: {json.dumps(run['project'].get('profile', {}), ensure_ascii=False)}\n"
-                f"Task: {run['task']}"
-            )})
-            executor = ToolExecutor(run["workspace"])
-            for _ in range(12):
-                decision = ModelAdapter("live").decide(messages)
-                if decision["type"] == "finish":
-                    run["state"] = "COMPLETED"; run["summary"] = decision["summary"]
-                    emit(run, "finish", "Task completed", run["summary"], status="done"); break
-                tool, args = decision["tool"], decision["arguments"]
-                emit(run, "decision", f"Selected {tool}", decision.get("reason", ""), tool=tool, payload=args, status="active")
-                result = executor.call(tool, args)
-                if result.get("diff"): run["diffs"].append(result["diff"])
-                emit(run, "tool_result", f"{tool} returned", compact(result), tool=tool, payload=result, status="done")
-                update_evidence_score(run)
-                assistant_message = decision.get("assistant_message") or {"role": "assistant", "content": decision.get("reason", "")}
-                messages.extend([assistant_message,
-                                 {"role": "tool", "tool_call_id": decision.get("call_id", ""),
-                                  "content": json.dumps(result, ensure_ascii=False)}])
-            else:
-                raise RuntimeError("maximum iterations reached")
-    except Exception as exc:
-        run["state"] = "FAILED"; run["summary"] = str(exc)
-        emit(run, "error", "Run stopped", str(exc), status="failed")
-    finally:
-        update_evidence_score(run)
-        run["finished"] = True
 
 
 def run_agent(run: dict[str, Any], mode: str):
     """Execute a run through one observable, gate-controlled path."""
     try:
-        registry = ToolRegistry(ToolExecutor(run["workspace"]))
+        registry = ToolRegistry(
+            ToolExecutor(run["workspace"], lambda: is_cancel_requested(run))
+        )
+        ensure_run_active(run)
         run["state"] = "UNDERSTAND"
         task_event_id = emit(
             run, "task", "Task received", run["task"],
@@ -845,8 +993,12 @@ def run_agent(run: dict[str, Any], mode: str):
         update_evidence_score(run)
 
         if mode == "mock":
+            completed = False
             for step in mock_steps():
-                time.sleep(0.48)
+                ensure_run_active(run)
+                for _ in range(8):
+                    time.sleep(0.06)
+                    ensure_run_active(run)
                 if step["kind"] == "state":
                     run["state"] = step["state"]
                     phase = {
@@ -861,25 +1013,50 @@ def run_agent(run: dict[str, Any], mode: str):
                     )
                 elif step["kind"] == "finish":
                     if complete_run(run, step["summary"]):
+                        completed = True
                         break
                 else:
                     execute_agent_tool(
                         run, registry, step["tool"], step["arguments"],
                         reason=step["reason"], requested_phase=step.get("phase")
                     )
+            if not completed:
+                raise RuntimeError(
+                    "the deterministic Mock fixture could not satisfy the selected acceptance contract"
+                )
         else:
+            contract = run["contract"]
             messages = [{"role": "system", "content": (
                 "You are AURORA TRACE, an evidence-first local coding agent. "
                 "Work only through the provided tools. First inspect the repository, "
-                "capture a baseline test result when tests exist, make the smallest "
-                "safe patch, run regression verification, and only then finish. "
-                "Return one tool call at a time. Never claim success without evidence."
+                "follow the task-specific acceptance contract, make the smallest safe patch, "
+                "run regression verification, and only then finish. "
+                "Return one tool call at a time. Never claim success without evidence.\n"
+                f"Task type: {contract['task_type']} ({contract['task_type_label']}). "
+                f"Baseline policy: {contract['baseline_policy']}."
             )}, {"role": "user", "content": (
                 f"Project profile: {json.dumps(run['project'].get('profile', {}), ensure_ascii=False)}\n"
-                f"Task: {run['task']}"
+                f"Task: {run['task']}\n"
+                f"Acceptance gates: {json.dumps(contract['checks'], ensure_ascii=False)}"
             )}]
             adapter = ModelAdapter("live")
             for _ in range(12):
+                ensure_run_active(run)
+                messages, context_stats = apply_context_budget(messages)
+                if context_stats["compacted"]:
+                    run["last_event_id"] = emit(
+                        run, "context", "Evidence context compacted",
+                        f"Reduced model context from {context_stats['before_chars']} to "
+                        f"{context_stats['after_chars']} characters while preserving "
+                        "tool/result structure and verification facts.",
+                        phase="context", action="compact_context",
+                        evidence_type="context_compaction",
+                        verification_status="observed", status="done",
+                        parent_event_id=run.get("last_event_id"),
+                        input_value={"chars": context_stats["before_chars"]},
+                        output_value={"chars": context_stats["after_chars"],
+                                      "messages_compacted": context_stats["messages_compacted"]}
+                    )
                 decision = adapter.decide(messages)
                 if decision["type"] == "finish":
                     if complete_run(run, decision["summary"]):
@@ -911,6 +1088,9 @@ def run_agent(run: dict[str, Any], mode: str):
                 ])
             else:
                 raise RuntimeError("maximum iterations reached before the acceptance gate passed")
+    except RunCancelled:
+        run["state"] = "CANCELLED"
+        run["summary"] = "Run cancelled by user"
     except Exception as exc:
         run["state"] = "FAILED"
         run["summary"] = str(exc)
@@ -925,31 +1105,46 @@ def run_agent(run: dict[str, Any], mode: str):
         persist_run(run)
 
 
-def start_run(task: str, mode: str, project_id: str = "demo") -> dict[str, Any]:
+def start_run(task: str, mode: str, project_id: str = "demo",
+              task_type: str | None = None,
+              approval_mode: str = "auto") -> dict[str, Any]:
+    if approval_mode not in APPROVAL_MODES:
+        raise ValueError("approval_mode must be auto or manual")
     with PROJECT_LOCK:
         project = PROJECTS.get(project_id)
     if not project:
         raise ValueError("selected project does not exist")
     if project_id != "demo" and mode != "live":
         raise ValueError("uploaded projects require LIVE / MODEL API mode")
+    contract = contract_for(task, project, task_type)
+    if mode == "mock" and contract["task_type"] != "repair":
+        raise ValueError(
+            "内置 Mock Demo 只提供 Bug 修复夹具；请选择“Bug 修复”或切换到 Live Model。"
+        )
     if mode == "live" and not os.getenv("OPENAI_API_KEY"):
         raise ValueError("Live 模式需要 OPENAI_API_KEY；请先在启动服务的终端中设置环境变量")
     run_id = uuid.uuid4().hex[:8]
-    workspace = ROOT / ".runs" / run_id
-    workspace.parent.mkdir(parents=True, exist_ok=True)
+    run_dir = ROOT / ".runs" / run_id
+    workspace = run_dir / "workspace"
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(project["path"], workspace)
-    ledger_path = workspace / "evidence.ndjson"
-    state_path = workspace / "run.json"
+    ledger_path = run_dir / "evidence.ndjson"
+    state_path = run_dir / "run.json"
     created_at = timestamp()
-    run = {"id": run_id, "task": task, "mode": mode, "workspace": workspace,
+    run = {"id": run_id, "task": task, "mode": mode, "task_type": contract["task_type"],
+           "approval_mode": approval_mode, "pending_approval": None,
+           "cancel_requested": False, "tool_call_count": 0,
+           "workspace": workspace,
            "events": [], "ledger": [], "diffs": [], "state": "QUEUED",
            "summary": "", "finished": False, "lock": threading.Lock(),
-           "ledger_path": ledger_path, "contract": contract_for(task, project),
+           "ledger_path": ledger_path, "contract": contract,
            "project": {k: v for k, v in project.items() if k != "path"},
            "evidence": {}, "evidence_details": {}, "trust_score": 0,
            "boundary_violations": 0, "last_event_id": None,
            "created_at": created_at, "updated_at": created_at,
-           "state_path": state_path}
+           "state_path": state_path,
+           "approval_condition": threading.Condition(threading.Lock()),
+           "persist_lock": threading.Lock()}
     with RUN_LOCK: RUNS[run_id] = run
     persist_run(run)
     threading.Thread(target=run_agent, args=(run, mode), daemon=True).start()
@@ -987,7 +1182,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json({"error": "invalid static path"}, 400); return
             if file.exists() and file.is_file():
-                raw = file.read_bytes(); self.send_response(200); self.send_header("Content-Type", "text/css" if file.suffix == ".css" else "application/javascript"); self.end_headers(); self.wfile.write(raw); return
+                raw = file.read_bytes(); self.send_response(200); self.send_header("Content-Type", ("text/css" if file.suffix == ".css" else "application/javascript") + "; charset=utf-8"); self.end_headers(); self.wfile.write(raw); return
         if self.path.startswith("/api/run/") and self.path.endswith("/export"):
             run_id = self.path.split("/")[-2]; run = RUNS.get(run_id)
             if not run: self.send_json({"error": "run not found"}, 404); return
@@ -1005,6 +1200,10 @@ class Handler(BaseHTTPRequestHandler):
                     records.append({
                         "run_id": run["id"], "state": run["state"],
                         "task": run["task"], "mode": run["mode"],
+                        "approval_mode": run.get("approval_mode", "auto"),
+                        "pending_approval": run.get("pending_approval"),
+                        "cancel_requested": run.get("cancel_requested", False),
+                        "task_type": run.get("task_type", "change"),
                         "created_at": run.get("created_at", ""),
                         "updated_at": run.get("updated_at", ""),
                         "trust_score": run.get("trust_score", 0),
@@ -1017,7 +1216,13 @@ class Handler(BaseHTTPRequestHandler):
             run_id = self.path.split("/")[-1]; run = RUNS.get(run_id)
             if not run: self.send_json({"error": "run not found"}, 404); return
             with run["lock"]:
-                self.send_json({"id": run["id"], "state": run["state"], "events": run["events"],
+                self.send_json({"id": run["id"], "state": run["state"],
+                                "approval_mode": run.get("approval_mode", "auto"),
+                                "pending_approval": run.get("pending_approval"),
+                                "cancel_requested": run.get("cancel_requested", False),
+                                "tool_call_count": run.get("tool_call_count", 0),
+                                "task_type": run.get("task_type", "change"),
+                                "events": run["events"],
                                 "ledger": run["ledger"], "diffs": run["diffs"],
                                 "summary": run["summary"], "finished": run["finished"],
                                 "contract": run["contract"], "evidence": run["evidence"],
@@ -1028,7 +1233,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "project": run.get("project", {}),
                                 "replay": {"event_count": len(run["events"]),
                                             "ledger_persisted": run["ledger_path"].exists(),
-                                            "workspace": f".runs/{run['id']}"}})
+                                            "workspace": f".runs/{run['id']}/workspace"}})
             return
         if self.path == "/api/projects":
             with PROJECT_LOCK:
@@ -1056,6 +1261,67 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
             return
+        if self.path.startswith("/api/run/") and self.path.endswith("/approve"):
+            run_id = self.path.split("/")[-2]
+            run = RUNS.get(run_id)
+            if not run:
+                self.send_json({"error": "run not found"}, 404)
+                return
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                decision = body.get("decision", "")
+                if not resolve_approval(run, decision):
+                    self.send_json({"error": "no approval is pending for this run"}, 409)
+                    return
+            except json.JSONDecodeError:
+                self.send_json({"error": "request body must be valid JSON"}, 400)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            with run["lock"]:
+                self.send_json({"id": run["id"], "state": run["state"],
+                                "approval_mode": run.get("approval_mode", "auto"),
+                                "pending_approval": run.get("pending_approval"),
+                                "cancel_requested": run.get("cancel_requested", False),
+                                "tool_call_count": run.get("tool_call_count", 0),
+                                "task_type": run.get("task_type", "change"),
+                                "events": run["events"], "ledger": run["ledger"],
+                                "diffs": run["diffs"], "summary": run["summary"],
+                                "finished": run["finished"], "contract": run["contract"],
+                                "evidence": run["evidence"],
+                                "evidence_details": run.get("evidence_details", {}),
+                                "trust_score": run["trust_score"],
+                                "created_at": run.get("created_at", ""),
+                                "updated_at": run.get("updated_at", ""),
+                                "project": run.get("project", {})})
+            return
+        if self.path.startswith("/api/run/") and self.path.endswith("/cancel"):
+            run_id = self.path.split("/")[-2]
+            run = RUNS.get(run_id)
+            if not run:
+                self.send_json({"error": "run not found"}, 404)
+                return
+            if not request_cancel(run):
+                self.send_json({"error": "run is already finished"}, 409)
+                return
+            with run["lock"]:
+                self.send_json({"id": run["id"], "state": run["state"],
+                                "approval_mode": run.get("approval_mode", "auto"),
+                                "pending_approval": run.get("pending_approval"),
+                                "cancel_requested": run.get("cancel_requested", False),
+                                "tool_call_count": run.get("tool_call_count", 0),
+                                "task_type": run.get("task_type", "change"),
+                                "events": run["events"], "ledger": run["ledger"],
+                                "diffs": run["diffs"], "summary": run["summary"],
+                                "finished": run["finished"], "contract": run["contract"],
+                                "evidence": run["evidence"],
+                                "evidence_details": run.get("evidence_details", {}),
+                                "trust_score": run["trust_score"],
+                                "created_at": run.get("created_at", ""),
+                                "updated_at": run.get("updated_at", ""),
+                                "project": run.get("project", {})})
+            return
         if self.path != "/api/run": self.send_json({"error": "not found"}, 404); return
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -1063,10 +1329,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "request body must be valid JSON"}, 400); return
         task = body.get("task", "修复 Todo 项目的删除边界 Bug，补充测试并运行测试。")
         mode = body.get("mode") or os.getenv("AURORA_MODE", "mock")
+        task_type = body.get("task_type") or "auto"
+        approval_mode = body.get("approval_mode") or "auto"
         if mode not in {"mock", "live"}:
             self.send_json({"error": "mode must be mock or live"}, 400); return
+        if task_type != "auto" and task_type not in TASK_TYPES:
+            self.send_json({"error": "task_type must be auto, repair, feature, refactor, or change"}, 400); return
+        if approval_mode not in APPROVAL_MODES:
+            self.send_json({"error": "approval_mode must be auto or manual"}, 400); return
         try:
-            self.send_json(start_run(task, mode, body.get("project_id", "demo")))
+            self.send_json(start_run(task, mode, body.get("project_id", "demo"),
+                                     task_type, approval_mode))
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
 
