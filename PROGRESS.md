@@ -19,7 +19,7 @@ The repository already contained a complete initial snapshot. It must not be des
 | Tool Registry and ToolSpec | implemented | `aurora.py`, Registry tests |
 | Structured tool errors | implemented | 15-test suite |
 | Causal event fields | implemented | `parent_event_id`, `phase`, `evidence_type` |
-| Acceptance completion gate | implemented | early finish is blocked |
+| Adaptive Acceptance Contract | implemented | repair/feature/refactor/change baseline policies |
 | Run persistence | implemented | atomic `run.json` snapshots |
 | Evidence Ledger persistence | implemented | `evidence.ndjson` |
 | Run history API | implemented | `GET /api/runs` |
@@ -27,7 +27,9 @@ The repository already contained a complete initial snapshot. It must not be des
 | UTF-8 evidence console | implemented | `web/console.*` served at `/` |
 | Read-only event Replay | implemented | console Replay view |
 | Live provider integration | implemented, requires configuration | OpenAI-compatible endpoint |
-| Context compaction | planned | not claimed by current version |
+| Evidence-aware Context Budget | implemented | deterministic old-content compaction with role preservation |
+| Approval Gate | runtime implemented | auto/manual policy, pending tool arguments and approve/reject API |
+| Cooperative cancellation | runtime implemented | approval wake-up, long-command interruption and `CANCELLED` state |
 | Subagents / Plugins / MCP | planned | not claimed by current version |
 
 ## Verification record
@@ -35,7 +37,7 @@ The repository already contained a complete initial snapshot. It must not be des
 The upgrade was verified with:
 
 ```text
-python -m unittest discover -s tests -v  →  20 tests passed
+python -m unittest discover -s tests -v  →  34 tests passed
 python -m py_compile aurora.py          →  passed
 node --check web/app.js                 →  passed
 node --check web/console.js             →  passed
@@ -49,11 +51,12 @@ A real Mock end-to-end Run also reached `COMPLETED` with:
 - four evidence gates true;
 - persisted `run.json` and `evidence.ndjson`.
 
+The Mock fixture boundary is explicit: it accepts the built-in repair contract only; mismatched feature/refactor/change requests are rejected before workspace creation.
+
 The generated Run ID and timestamps are intentionally not fixed in this document.
 
 ## Next honest increments
 
-1. Add a task-typed contract for projects whose correct baseline is already green.
-2. Add two distinct seeded bug fixtures and compare traces across tasks.
-3. Add API-level tests for project import, Run history and Trace export.
-4. Extract the stable logical layers from `aurora.py` only when the extracted module has independent tests and a clear defense explanation.
+1. Add API-level tests for project import, Run history, Approval Gate and Trace export.
+2. Add a second seeded bug fixture only if it supports a clearly different evidence story.
+3. Extract the stable logical layers from `aurora.py` only when the extracted module has independent tests and a clear defense explanation.

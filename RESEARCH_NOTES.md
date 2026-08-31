@@ -44,7 +44,7 @@
 
 ## 局限与后续
 
-当前 Demo 是小型、确定性的本地任务，不能等价于 SWE-bench 级别的复杂修复；Mock 模式也不能冒充真实模型推理。正式演示应优先使用 Live 模式，Mock 模式仅作为网络/API 不稳定时的透明备用方案。后续如果有时间，可以加入人工审批、Git 分支隔离、代码搜索、测试选择和多次运行对比，但必须先实测再展示。
+当前 Demo 是小型、确定性的本地任务，不能等价于 SWE-bench 级别的复杂修复；Mock 模式也不能冒充真实模型推理。运行时已经支持自动授权、手动审批和协作式取消，控制台交互将在后续界面提交中接入。Git 分支隔离、代码搜索和测试选择仍是后续方向，但必须先实测再展示。
 
 ## 可核验参考
 
@@ -55,4 +55,3 @@
 - SWE-agent GitHub: <https://github.com/SWE-agent/SWE-agent>
 - OpenHands GitHub: <https://github.com/All-Hands-AI/OpenHands>
 - Aider: <https://github.com/Aider-AI/aider>
-

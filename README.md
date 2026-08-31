@@ -19,13 +19,16 @@ AURORA TRACE 通过 OpenAI 兼容模型接口理解编程任务，自主调用�
 
 - 不使用 LangChain、LlamaIndex、Agents SDK 或任何 Agent 框架；Agent 循环、上下文、工具注册、解析、执行和终止条件全部自行实现。
 - Evidence Ledger：每次行动都有时间、理由、输入、输出摘要和状态，避免“只展示最后代码”的黑箱演示。
-- Acceptance Contract：运行开始时锁定验收条件，核验基线失败、最小补丁、回归通过和工作区安全边界，实时计算 Evidence Confidence。
+- Adaptive Acceptance Contract：根据 Bug 修复、功能新增、结构重构或一般变更选择不同的基线策略；修复任务要求复现失败，新增/重构任务要求先确认绿色基线。
 - Replayable Run：每个任务在独立 run workspace 中执行，自动捕获修改前后 Diff，能够回放完整过程。
-- Exportable Trace：运行结束后可导出结构化 JSON 轨迹；workspace 中同步保留 `evidence.ndjson`。
+- Exportable Trace：运行结束后可导出结构化 JSON 轨迹；`.runs/<run_id>/` 中同步保留 `run.json` 与 `evidence.ndjson`，Agent 只能访问其下的 `workspace/`。
 - Project Intake：可从网页导入不超过 10 MB 的 ZIP 项目；系统进行 Zip Slip 检查、限制解压大小，并自动生成语言与测试命令画像。
 - Guarded Workspace：文件访问限制在任务工作区内；命令执行使用白名单和超时。
+- Approval Gate：手动模式下，写文件、精确替换和命令执行必须先经过人工授权；审批结果进入 Evidence Ledger。
+- Cooperative Cancellation：运行可以从页面或 API 请求取消；审批等待和长命令都会被协作式唤醒或中断，并落为 `CANCELLED` 终态。
 - Mock Demo：无需 API Key 即可演示完整闭环；页面也提供 Live 模式，可切换到真实 OpenAI-compatible API。
-- 高级深色控制台界面，包含运行状态、证据流、文件树、Diff 和验证结果。
+- Evidence-aware Context Budget：长任务压缩旧的源代码/命令输出，但保留消息结构、工具状态和验证事实，避免上下文无限膨胀。
+- 证据控制台界面，包含运行状态、验收策略、证据流、Run History、Replay、Diff 和验证结果。
 
 ## 运行
 
@@ -36,9 +39,9 @@ cd aurora-trace
 python aurora.py
 ```
 
-浏览器打开 <http://127.0.0.1:8765>，选择内置 Todo 项目和“稳定演示 / DEMO”，点击“开始执行”即可观看完整演示。
+浏览器打开 <http://127.0.0.1:8765>，选择内置 Todo 项目、`Bug 修复 · 需要复现失败` 和 `Mock Demo · 无需 API Key`，点击“开始受控运行”即可观看完整演示。运行时已经支持自动授权、手动审批和协作式取消；对应的控制台交互将在后续界面提交中接入。验收策略也可以选择自动识别、功能新增、结构重构或一般变更；后面三类策略需要使用 Live Model，因为内置 Mock 夹具只对应这个故意失败的 Bug 修复任务。
 
-处理自己的项目：在左侧“项目来源”点击“导入 ZIP”。导入项目会持久化到本地 `projects/`，每次运行仍会复制到新的 `.runs/<run_id>/`，不会直接修改原始导入文件。上传项目需要使用 Live 模式和模型 API；内置 Todo 项目可以使用稳定 Demo 模式。
+处理自己的项目：在左侧“项目来源”点击“导入 ZIP”。导入项目会持久化到本地 `projects/`，每次运行仍会复制到新的 `.runs/<run_id>/workspace/`，不会直接修改原始导入文件，也无法接触上层审计账本。上传项目需要使用 Live 模式和模型 API；内置 Todo 项目可以使用稳定 Demo 模式。
 
 真实模型模式（PowerShell）：
 
@@ -54,7 +57,7 @@ API Key 只通过环境变量读取，不要提交到仓库、README 或视频�
 
 ## 演示任务
 
-默认 Demo 会让 Agent 修复一个 Todo 项目的删除边界 Bug，并运行 `python -m unittest discover -s tests -v`。演示中可以看到：扫描项目、读取代码、先复现失败、写入补丁、再次测试、最终通过。
+默认 Demo 会让 Agent 修复一个 Todo 项目的删除边界 Bug，并运行 `python -m unittest discover -s tests -v`。演示中可以看到：扫描项目、读取代码、形成基线假设、先复现失败、写入补丁、再次测试、验收 Gate 最终通过。对于功能新增或结构重构任务，系统会将“基线故障”解释为“绿色基线已确认”，避免把 Bug 修复规则错误套用到所有任务；若在 Mock 模式选择了不匹配的任务类型，系统会在复制工作区前明确拒绝并提示切换 Live Model。
 
 ## 核心架构
 
@@ -66,14 +69,15 @@ Browser Console → HTTP API → Agent Controller → Model Adapter
                        isolated workspace + evidence ledger
 ```
 
-模型只负责下一步决策；本地执行器负责真实文件和命令操作；执行结果再次进入上下文。Agent 在 `finish`、失败或达到最大迭代次数时停止。
+模型只负责下一步决策；策略层决定高风险工具是否需要人工审批；本地执行器负责真实文件和命令操作；执行结果再次进入上下文。Agent 在 `finish`、失败、用户取消或达到最大迭代次数时停止。
 
 ## 项目结构
 
 ```text
-aurora.py                 # 标准库 HTTP 服务、Agent、工具和模型适配器
-web/index.html            # 控制台页面
-web/app.js                # 事件轮询、Diff 与状态可视化
+aurora.py                 # 标准库 HTTP 服务、Agent、工具、契约和模型适配器
+web/console.html          # 当前 UTF-8 控制台页面
+web/console.js            # 事件轮询、契约、History、Replay 与状态可视化
+web/console.css           # 当前控制台视觉系统
 web/style.css             # 视觉系统
 seed_project/             # 演示用的故意含 Bug 项目
 projects/                 # 本地导入项目（已被 .gitignore 排除）

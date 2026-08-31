@@ -62,18 +62,18 @@ Users can import a ZIP project directly from the web interface. The system valid
 
 ## 5. 工具与控制逻辑 / Tools and Control Logic
 
-当前实现提供四个本地工具：
+当前实现提供五个本地工具：
 
-The current implementation exposes four local tools:
+The current implementation exposes five local tools:
 
 - `list_files`：建立项目地图 / build a project map
 - `read_file`：读取真实上下文 / read real context
 - `write_file`：写入代码并生成 Unified Diff / write code and generate a unified diff
 - `run_command`：执行白名单命令并捕获输出 / run allowlisted commands and capture output
 
-此外，`replace_text` 只允许对一个唯一匹配进行精确替换，并直接返回最小 Diff。运行开始时还会建立 Acceptance Contract，核验基线失败、最小补丁、回归测试通过和工作区边界四个 Gate。
+此外，`replace_text` 只允许对一个唯一匹配进行精确替换，并直接返回最小 Diff。运行开始时还会建立 Adaptive Acceptance Contract：Bug 修复任务核验基线失败，功能新增、重构和一般变更任务核验绿色基线；四类任务都要求最小补丁、回归测试通过和工作区边界安全。
 
-In addition, `replace_text` only applies an exact replacement when there is one unique match and returns a minimal Diff. Each run also creates an Acceptance Contract with four gates: baseline failure, minimal patch, regression pass, and workspace boundary compliance.
+In addition, `replace_text` only applies an exact replacement when there is one unique match and returns a minimal Diff. Each run also creates an Adaptive Acceptance Contract: repair tasks require an observed baseline failure, while feature, refactor and general-change tasks require a green baseline. All four types still require a minimal patch, a passing regression test and workspace-boundary compliance.
 
 终止条件 / Termination conditions:
 
@@ -83,9 +83,9 @@ In addition, `replace_text` only applies an exact replacement when there is one 
 
 安全控制 / Safety controls:
 
-- 所有路径必须位于当前 run workspace 内 / all paths must remain inside the run workspace;
+- 所有路径必须位于当前 run workspace 内，审计文件位于 Agent 不可见的上层 / all paths must remain inside the run workspace, while audit files stay outside the Agent-visible child directory;
 - 命令使用 `shell=False` / commands use `shell=False`;
-- Evidence Ledger 同步写入 `evidence.ndjson`，并可导出 JSON Trace / the Evidence Ledger is persisted to `evidence.ndjson` and exportable as JSON;
+- Evidence Ledger 同步写入运行目录根部的 `evidence.ndjson`，并可导出 JSON Trace / the Evidence Ledger is persisted at the run root and exportable as JSON;
 - 只允许 `python`、`pytest`、`npm`、`node` 前缀 / only selected command prefixes are allowed;
 - 禁止 shell chaining、重定向和 20 秒以上执行 / chaining, redirection, and executions over 20 seconds are blocked.
 
@@ -127,9 +127,9 @@ The final evidence is five passing unit tests—not a verbal claim from the mode
 
 ## 8. 诚实的能力边界 / Honest Limitations
 
-**中文**：当前版本是一个完成考核目标的最小可用原型，而不是生产级代码沙箱。Mock 模式用于保证视频演示稳定；Live 模式用于展示真实模型调用。下一步可加入统一 Patch 工具、人工审批、持久化 Ledger、代码搜索、回归测试选择和多次运行对比，但不应在短视频中堆砌未验证功能。
+**中文**：当前版本是一个完成考核目标的可复现原型，而不是生产级代码沙箱。Mock 模式用于保证视频演示稳定；Live 模式用于展示真实模型调用。当前已实现高风险工具人工审批和协作式取消；代码搜索、测试选择、分支级隔离等仍属于后续方向，不应在短视频中堆砌未验证功能。
 
-**English**: The current version is a focused prototype that satisfies the assessment target, not a production-grade code sandbox. Mock mode guarantees a stable recording; Live mode demonstrates real model integration. Future extensions could include a structured patch tool, human approval, persistent ledgers, code search, test selection, and cross-run comparison—but unverified features should not be overclaimed in a short video.
+**English**: The current version is a reproducible prototype that satisfies the assessment target, not a production-grade code sandbox. Mock mode guarantees a stable recording; Live mode demonstrates real model integration. High-risk tool approval and cooperative cancellation are implemented; code search, test selection, and branch-level isolation remain future directions. Unverified features should not be overclaimed in a short video.
 
 ## 9. 推荐答辩表述 / Recommended Defense Statement
 

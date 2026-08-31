@@ -10,10 +10,10 @@ Does an evidence-first execution policy make Coding Agent behavior easier to ver
 
 | Dimension | Measurement | Current source |
 | --- | --- | --- |
-| Completion integrity | percentage of Runs where `Task completed` follows all four gates | `complete_run()` and `evidence` |
+| Completion integrity | percentage of Runs where `Task completed` follows all task-specific gates | `complete_run()` and `evidence` |
 | Trace completeness | percentage of action events containing a parent edge and phase | `events` / `evidence.ndjson` |
 | Reproducibility | same seed project produces the same expected patch and test outcome in Mock mode | `seed_project/` and tests |
-| Isolation | original project hash/content remains unchanged after a Run | `.runs/<run_id>/` copy and boundary tests |
+| Isolation | original project hash/content remains unchanged and audit metadata is outside the Agent workspace | `.runs/<run_id>/workspace/` copy and boundary tests |
 | Safety | rejected traversal, shell chaining, redirection, inline execution and disallowed commands | `ToolExecutor` tests |
 | Patch scope | changed files and added/removed lines in unified Diff | tool result payload |
 | Recovery | persisted Run can be loaded after process restart | `run.json` and `/api/runs` |
@@ -24,7 +24,7 @@ Use the built-in Todo project:
 
 1. Start the server with `python aurora.py`.
 2. Open `http://127.0.0.1:8765`.
-3. Keep `Todo Boundary Demo` and `Mock Demo · 无需 API Key` selected.
+3. Keep `Todo Boundary Demo`, `Bug 修复 · 需要复现失败` and `Mock Demo · 无需 API Key` selected. The built-in Mock fixture is intentionally limited to this repair task; feature/refactor/change contracts are exercised with Live Model or an imported project.
 4. Run the default task.
 5. Observe the following actual sequence:
 
@@ -34,7 +34,7 @@ UNDERSTAND
   → read_file(todo.py)
   → read_file(tests/test_todo.py)
 PLAN
-  → baseline test fails
+  → baseline hypothesis and baseline failure
 EXECUTE
   → exact replace creates one-file minimal Diff
 VERIFY
@@ -53,11 +53,25 @@ The expected current result is:
 
 The exact `run_id` and timestamps are generated at execution time and must not be hard-coded into documentation.
 
+## Task-aware contract check
+
+The contract is intentionally not a universal “baseline must fail” rule:
+
+| Task type | Baseline gate | Why |
+| --- | --- | --- |
+| repair | a failing pre-patch test is captured | proves the repair target is observable before mutation |
+| feature | a green pre-patch test baseline is captured | prevents a new feature from hiding an existing regression |
+| refactor | a green pre-patch test baseline is captured | separates structural change from behavior loss |
+| change | a green pre-patch test baseline is captured | conservative default for unclassified work |
+
+The same patch, regression and boundary gates apply to all four types. This makes the evidence policy generalize beyond the single Todo fixture without relaxing the completion barrier.
+
 ## Negative controls
 
 The following cases should not receive a successful completion result:
 
 - a Live model returns `finish` before baseline evidence exists;
+- a feature/refactor task attempts to finish without establishing a green baseline;
 - a regression command is not run after a patch;
 - an exact replacement matches zero or multiple locations;
 - a file path contains `..` and escapes the Run workspace;
