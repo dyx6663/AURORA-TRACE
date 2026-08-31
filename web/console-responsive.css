@@ -31,3 +31,39 @@
 @media (prefers-reduced-motion: reduce) {
   .primary-btn:hover, .primary-small:hover { transform: none; }
 }
+
+/* Chinese-first interface: supporting labels are readable, not decorative noise. */
+.brand small,
+.toolbar-title small,
+.panel-head small,
+label small {
+  font-size: 10px;
+  letter-spacing: .35px;
+}
+
+.brand small {
+  color: #86a1aa;
+}
+
+.panel-head small,
+.toolbar-title small {
+  color: #829ba4;
+}
+
+.state-map,
+.step-no,
+.score-mini,
+.graph-key,
+.mono,
+.sandbox-chip,
+.service-status,
+.live-label,
+.tag,
+.verify-badge {
+  font-size: 10px;
+  letter-spacing: .35px;
+}
+
+.state-map {
+  color: #829ba4;
+}
