@@ -54,7 +54,7 @@ $env:AURORA_MODEL = "gpt-4o-mini"
 python aurora.py
 ```
 
-API Key 只通过环境变量读取，不要提交到仓库、README 或视频中。
+API Key 只通过环境变量读取，不会写入项目文件或运行记录。
 
 ## 演示任务
 

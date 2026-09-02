@@ -9,7 +9,7 @@
 - Aider：以终端为中心，用模型协助编辑 Git 仓库；
 - ReAct 类方法：让模型在“思考—行动—观察”之间循环。
 
-这些路线验证了工具调用闭环的有效性，但在考核演示中，如果只展示聊天记录、终端输出或最终 Diff，很容易与常见 Coding Agent 作品相似，也不容易让评委快速判断每一步为什么发生。
+这些路线验证了工具调用闭环的有效性，但如果只展示聊天记录、终端输出或最终 Diff，很难判断每一步为什么发生。
 
 ## 2. 本项目的差异化定位
 
@@ -23,7 +23,7 @@ decision → tool call → local result → verification evidence
 
 > Agent 的每个外部动作都能被解释、追踪和复盘。
 
-这使它更适合软件工程专业面试：评委可以从事件卡片、工具参数、Diff 和测试结果直接检查系统是否真的完成了任务。
+这样可以从事件卡片、工具参数、Diff 和测试结果直接检查系统是否真的完成了任务。
 
 ## 3. 三个核心设计决策
 
@@ -35,7 +35,9 @@ decision → tool call → local result → verification evidence
 
 ### Run Workspace
 
-每次运行都复制到 `.runs/<run_id>`，不直接污染种子项目。这样可以保证每次视频演示从同一初始状态开始，也能清楚计算 Diff。
+每次运行都复制到 `.runs/<run_id>`，不直接污染种子项目，也便于保持可重复的初始状态并计算 Diff。
+
+对于导入的真实项目，隔离执行不是终点。Run 通过验收后，系统自动比较运行开始时记录的源项目清单，确认原项目没有被外部改动，再写回变更并保留写回前备份。用户不需要重复确认 Agent 是否已经发现问题；只有检测到源项目被外部改动时，系统才会暂停自动写回，避免覆盖新内容。
 
 ### Guarded Executor
 
@@ -43,7 +45,7 @@ decision → tool call → local result → verification evidence
 
 ### Trace Export
 
-每个 run 同时保留内存事件流、`evidence.ndjson` 和可下载 JSON。前者服务于实时界面，后两者服务于复盘、提交材料和运行审计。
+每个 run 同时保留内存事件流、`evidence.ndjson` 和可下载 JSON。前者服务于实时界面，后两者服务于复盘和运行审计。
 
 ### Approval Gate 与 Cancellation
 
@@ -51,25 +53,7 @@ decision → tool call → local result → verification evidence
 
 这两个机制共同形成运行时治理边界：模型可以提出动作，但不能绕过人的授权；用户可以在长任务或风险判断改变时终止 Run。终止结果与审批决定都会进入 Evidence Ledger，并区分 `COMPLETED`、`FAILED` 和 `CANCELLED`。
 
-## 4. 面试时的核心回答
-
-**问：为什么不直接让模型输出代码？**
-
-答：因为编程任务需要读取真实上下文、修改真实文件并运行验证。模型负责决策，本地执行器负责事实，测试结果再反馈给模型，二者形成闭环。
-
-**问：为什么需要 Evidence Ledger？**
-
-答：普通日志只能说明发生了什么，Ledger 还保留事件之间的关联，让每次修改都能追溯到决策理由和验证结果。这是面向软件工程可靠性的设计。
-
-**问：如何保证运行最终会停止？**
-
-答：以 `finish`、异常失败、用户取消和最大 12 次迭代作为终止条件；每次工具调用都产生结构化结果，模型不能通过自由文本绕过控制器。当前版本不额外加入重复调用检测，重点验证审批边界和协作式取消。
-
-**问：是否使用了 Agent 框架？**
-
-答：没有。项目只使用 Python 标准库和模型的 HTTP 接口；工具注册、JSON 解析、上下文、循环、执行器和前端事件流均为自行实现。
-
-## 5. 参考入口
+## 4. 参考入口
 
 - SWE-agent: <https://github.com/SWE-agent/SWE-agent>
 - OpenHands: <https://github.com/All-Hands-AI/OpenHands>

@@ -60,6 +60,7 @@ The runtime policy adds two explicit lifecycle controls:
 
 - `Approval Gate`: mutating tools (`write_file`, `replace_text`, `run_command`) can pause in `WAITING_APPROVAL` until a human approves or rejects the exact arguments;
 - `Cancellation`: `POST /api/run/<id>/cancel` sets a cooperative cancellation flag, wakes approval waits, and terminates a running command process when its polling loop observes the flag.
+- `Verified Apply`: a completed uploaded-project Run can be applied back through one explicit user action. The runtime compares a pre-run source manifest before copying changed files and keeps an apply backup under the Run directory.
 
 The terminal state is persisted as `CANCELLED`, rather than being misreported as a generic failure.
 
