@@ -201,10 +201,6 @@ assets/                   # README visual assets
 
 The current version focuses on explainable execution for one controlled Run. It prioritizes clear boundaries, structured records, and reproducible paths for every file operation, command call, and verification result. Production-grade container isolation, general multi-Agent scheduling, and a plugin ecosystem are outside the current scope.
 
-## ⚠️ Scope and Safety
-
-AURORA TRACE is a reproducible engineering-experiment platform, not a production sandbox or general multi-Agent scheduler. Run untrusted projects only in a dedicated directory or a low-privilege environment.
-
 ## 📄 License
 
 MIT
