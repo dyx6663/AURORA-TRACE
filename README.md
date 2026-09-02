@@ -4,14 +4,15 @@
   <img src="assets/aurora-trace-banner.png" alt="AURORA TRACE evidence-first coding agent" width="100%">
 </p>
 
-<p align="center"><strong>Evidence-First Local Coding Agent</strong><br>Replayable, auditable execution for software-engineering tasks.</p>
-
 <p align="center"><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
+  &nbsp;&nbsp;
   <img src="https://img.shields.io/badge/Runtime-Standard%20Library-0f766e?style=for-the-badge" alt="Standard library runtime">
+  &nbsp;&nbsp;
   <img src="https://img.shields.io/badge/Agent%20Framework-None-7c3aed?style=for-the-badge" alt="No agent framework">
+  &nbsp;&nbsp;
   <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT License">
 </p>
 
