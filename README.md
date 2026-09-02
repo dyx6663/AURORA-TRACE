@@ -17,7 +17,7 @@
 
 > 当前入口 / Current entry: `web/console.html`, served by `python aurora.py` at `http://127.0.0.1:8765`.
 
-## 中文简介
+## 🌌 中文简介
 
 AURORA TRACE 是一个面向软件工程任务的证据驱动型 Coding Agent 实验平台。它把每次运行组织成一条可解释、可验证、可追溯、可回放的闭环：
 
@@ -38,13 +38,13 @@ AURORA TRACE 是一个面向软件工程任务的证据驱动型 Coding Agent �
 </tr>
 </table>
 
-## Problem and Design
+## 🧭 Problem and Design
 
 普通 Coding Agent 往往把重点放在“生成了什么补丁”，但软件工程任务还需要回答三个问题：Agent 为什么采取这一步、工具到底执行了什么、最终结果是否有依据。AURORA TRACE 将这三个问题直接写入运行时结构，而不是在任务结束后再拼接日志。
 
 一次运行由四类角色协作完成：模型提出下一步动作；Tool Registry 校验工具和参数；本地 Executor 执行文件与命令；Acceptance Contract 根据任务类型判断证据是否充分。每个动作都会产生带有父事件关系的结构化记录，形成“决策 → 工具 → 结果 → 验证”的因果链。
 
-## Highlights
+## ✨ Highlights
 
 - **Evidence Ledger** — 记录决策、工具调用、文件变化和测试结果。
 - **Adaptive Acceptance Contract** — 为 Bug 修复、功能新增、重构和普通变更选择不同验收策略。
@@ -53,7 +53,7 @@ AURORA TRACE 是一个面向软件工程任务的证据驱动型 Coding Agent �
 - **Guarded Workspace** — 文件边界、命令白名单、审批和超时控制。
 - **OpenAI-compatible** — 可连接 OpenAI 兼容模型接口，模型适配层与本地执行层解耦。
 
-## Why it is different
+## 💡 Why it is different
 
 AURORA TRACE 把一次代码任务拆成四个可以单独检查的环节：
 
@@ -66,7 +66,7 @@ AURORA TRACE 把一次代码任务拆成四个可以单独检查的环节：
 
 这种分离带来两个直接好处：失败时可以定位是决策、执行还是验证环节出了问题；成功时也能说明结果由哪些真实证据支撑，而不是只展示最终补丁。
 
-## At a glance
+## 🧩 At a glance
 
 | 🤖 **Agent loop** | 🔧 **Tool boundary** | 📖 **Evidence graph** |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ AURORA TRACE 把一次代码任务拆成四个可以单独检查的环节：
 | --- | --- | --- |
 | 基线、补丁、回归测试和边界安全共同决定是否完成。 | 高风险操作可暂停等待批准，运行也可以被协作式取消。 | 只需 Python 标准库；模型接口与本地执行器保持清晰边界。 |
 
-## Quick Start
+## 🚀 Quick Start
 
 需要 Python 3.10 或更高版本；运行时仅使用 Python 标准库。
 
@@ -99,7 +99,7 @@ python aurora.py
 
 API Key 只从环境变量读取，不会写入仓库或运行记录。
 
-## Demo Flow
+## 🎬 Demo Flow
 
 默认演示修复 Todo 删除边界 Bug，并运行：
 
@@ -124,7 +124,7 @@ flowchart LR
 
 一次运行不是“模型生成代码后直接结束”，而是一个可循环检查的控制路径：模型提出动作，执行器产生事实，证据账本保存事实，验收契约决定是否继续或结束。
 
-## Task-aware verification
+## 🔍 Task-aware verification
 
 同一套执行框架可以承载不同类型的软件工程任务，但完成条件不会被硬编码成一种形式：
 
@@ -137,13 +137,13 @@ flowchart LR
 
 验收结果进入 Evidence Ledger 后才会计入完成分数；仅有模型的 `finish` 文本不会绕过本地检查。
 
-## Console Overview
+## 🖥️ Console Overview
 
 ![AURORA TRACE console](assets/aurora-trace-console.png)
 
 控制台将任务输入、证据流、代码变更、测试验收、置信度、验收 Gate 和运行历史放在同一个工作台中。每个区域都对应运行链上的一个可验证事实，点击面板可以查看更完整的结构化信息。
 
-## What is recorded
+## 📖 What is recorded
 
 每个 Run 至少包含以下信息：
 
@@ -169,15 +169,15 @@ sequenceDiagram
     L-->>V: evidence-backed completion
 ```
 
-## Verification Model
+## ✅ Verification Model
 
 验收契约不是固定的成功提示，而是随任务类型变化的验证策略：Bug 修复先要求观察修改前失败；功能新增、结构重构和一般变更先确认绿色基线。随后统一检查最小补丁、回归测试和工作区边界。只有真实命令结果进入证据账本后，完成状态才会被接受。
 
-## Safety and Scope
+## 🛡️ Safety and Scope
 
 每次运行都在隔离工作区中进行，原始项目不会被执行过程直接修改。文件访问不能越过工作区边界；命令执行使用白名单、`shell=False` 和超时控制；手动模式下，高风险操作需经过明确授权。项目用于研究可解释、可复现的工程 Agent 运行时，不宣称提供生产级沙箱或通用多智能体调度。
 
-## Testing
+## 🧪 Testing
 
 核心安全与契约行为位于 `tests/`，可使用以下命令运行：
 
@@ -185,7 +185,7 @@ sequenceDiagram
 python -m unittest discover -s tests -v
 ```
 
-## Architecture
+## 🏗️ Architecture
 
 ```text
 Browser Console → HTTP API → Agent Controller → Model Adapter
@@ -195,7 +195,7 @@ Browser Console → HTTP API → Agent Controller → Model Adapter
                        Isolated Workspace + Evidence Ledger
 ```
 
-## Documentation
+## 📚 Documentation
 
 | 文档 | 内容 |
 | --- | --- |
@@ -205,7 +205,7 @@ Browser Console → HTTP API → Agent Controller → Model Adapter
 | [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) | 工程决策与取舍 |
 | [README_EN.md](README_EN.md) | English project overview |
 
-## Project Layout
+## 🗂️ Project Layout
 
 ```text
 aurora.py                 # HTTP 服务、Agent 循环、工具、契约和模型适配器
@@ -215,21 +215,21 @@ tests/                    # 安全、执行和契约测试
 assets/                   # README 视觉资源
 ```
 
-## Implementation Notes
+## ⚙️ Implementation Notes
 
 - 使用 Python 标准库实现 HTTP 服务、Agent 循环、模型适配、工具注册、上下文预算和状态持久化。
 - 使用结构化事件而不是自由文本日志，事件之间通过 `parent_event_id` 保留因果关系。
 - 对 Bug 修复、功能新增、结构重构和一般变更采用不同基线策略，避免把“先复现失败”错误套用到所有任务。
 - 运行记录同时支持实时展示、JSON 导出和只读回放，便于复核一次运行而不重新执行代码。
 
-## Project Status
+## 📌 Project Status
 
 当前版本聚焦于单个受控 Run 的可解释执行，不追求堆叠 Agent 数量或接入大量外部服务。优先保证每一次文件操作、命令调用和验证结果都有明确边界、结构化记录和可复现路径；生产级容器隔离、通用多智能体调度和插件生态不在当前实现范围内。
 
-## Scope and Safety
+## ⚠️ Scope and Safety
 
 AURORA TRACE 是可复现的工程实验平台，不是生产级沙箱或通用多智能体调度器。不可信项目应在专用目录或低权限环境中运行。
 
-## License
+## 📄 License
 
 MIT
