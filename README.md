@@ -66,6 +66,16 @@ AURORA TRACE 把一次代码任务拆成四个可以单独检查的环节：
 
 这种分离带来两个直接好处：失败时可以定位是决策、执行还是验证环节出了问题；成功时也能说明结果由哪些真实证据支撑，而不是只展示最终补丁。
 
+## At a glance
+
+| 🤖 **Agent loop** | 🔧 **Tool boundary** | 📖 **Evidence graph** |
+| --- | --- | --- |
+| 一次只处理一个下一步动作，读取结果后再决定后续步骤。 | 文件、替换和命令执行统一经过注册表、参数校验和路径策略。 | 每个事件带时间、阶段和 `parent_event_id`，可以从结果回溯到触发它的决定。 |
+
+| 🔍 **Verification** | 👤 **Human control** | 🚀 **Local-first** |
+| --- | --- | --- |
+| 基线、补丁、回归测试和边界安全共同决定是否完成。 | 高风险操作可暂停等待批准，运行也可以被协作式取消。 | 只需 Python 标准库；模型接口与本地执行器保持清晰边界。 |
+
 ## Quick Start
 
 需要 Python 3.10 或更高版本；运行时仅使用 Python 标准库。
@@ -99,11 +109,65 @@ python -m unittest discover -s tests -v
 
 控制台会展示项目扫描、读取代码、形成基线、复现失败、应用补丁、重新测试、验收 Gate、证据时间线和 Replay。
 
+```mermaid
+flowchart LR
+    A[🚀 输入任务] --> B[🤖 Agent 决策]
+    B --> C{🔧 工具策略}
+    C -->|允许| D[本地执行器]
+    C -->|需要确认| E[👤 人工审批]
+    E -->|批准| D
+    D --> F[📖 Evidence Ledger]
+    F --> G[🔍 验收契约]
+    G -->|证据充分| H[🎉 完成 / 回放]
+    G -->|证据不足| B
+```
+
+一次运行不是“模型生成代码后直接结束”，而是一个可循环检查的控制路径：模型提出动作，执行器产生事实，证据账本保存事实，验收契约决定是否继续或结束。
+
+## Task-aware verification
+
+同一套执行框架可以承载不同类型的软件工程任务，但完成条件不会被硬编码成一种形式：
+
+| 任务类型 | 修改前要求 | 修改后要求 |
+| --- | --- | --- |
+| 🐛 Bug 修复 | 复现一个可观察的失败 | 最小补丁 + 回归测试 |
+| ✨ 功能新增 | 确认现有测试保持绿色 | 功能测试 + 回归测试 |
+| 🧹 结构重构 | 确认重构前基线稳定 | 行为保持 + 回归测试 |
+| 📝 一般变更 | 记录当前基线状态 | 契约要求的检查全部通过 |
+
+验收结果进入 Evidence Ledger 后才会计入完成分数；仅有模型的 `finish` 文本不会绕过本地检查。
+
 ## Console Overview
 
 ![AURORA TRACE console](assets/aurora-trace-console.png)
 
 控制台将任务输入、证据流、代码变更、测试验收、置信度、验收 Gate 和运行历史放在同一个工作台中。每个区域都对应运行链上的一个可验证事实，点击面板可以查看更完整的结构化信息。
+
+## What is recorded
+
+每个 Run 至少包含以下信息：
+
+- **决策**：模型选择的工具、调用理由和目标阶段；
+- **执行**：工具参数、返回码、标准输出和受影响文件；
+- **变更**：统一 Diff、文件路径和补丁大小；
+- **验证**：基线状态、测试用例、验收 Gate 和最终状态；
+- **关系**：时间戳、运行编号和父事件，用于因果追踪与 Replay。
+
+```mermaid
+sequenceDiagram
+    participant M as 🤖 Model
+    participant R as 🔧 Registry
+    participant X as Local Executor
+    participant L as 📖 Ledger
+    participant V as 🔍 Verifier
+    M->>R: propose next action
+    R->>X: validate and execute
+    X-->>L: result + diff + status
+    L-->>M: structured observation
+    M->>V: propose finish
+    V-->>L: gate decision
+    L-->>V: evidence-backed completion
+```
 
 ## Verification Model
 
@@ -157,6 +221,10 @@ assets/                   # README 视觉资源
 - 使用结构化事件而不是自由文本日志，事件之间通过 `parent_event_id` 保留因果关系。
 - 对 Bug 修复、功能新增、结构重构和一般变更采用不同基线策略，避免把“先复现失败”错误套用到所有任务。
 - 运行记录同时支持实时展示、JSON 导出和只读回放，便于复核一次运行而不重新执行代码。
+
+## Project Status
+
+当前版本聚焦于单个受控 Run 的可解释执行，不追求堆叠 Agent 数量或接入大量外部服务。优先保证每一次文件操作、命令调用和验证结果都有明确边界、结构化记录和可复现路径；生产级容器隔离、通用多智能体调度和插件生态不在当前实现范围内。
 
 ## Scope and Safety
 
