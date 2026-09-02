@@ -70,3 +70,17 @@ footer {
   width: calc(100% - 32px);
   max-width: calc(100% - 32px);
 }
+
+/* Topic markers: small visual anchors for each evidence-workbench section. */
+.panel-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.panel-title > small { margin-left: 2px; }
+.topic-icon { width: 26px; height: 26px; display: inline-grid; place-items: center; flex: 0 0 26px; border: 1px solid #bed5ce; border-radius: 8px; background: linear-gradient(145deg, #f7fbf8, #e1eee9); color: #254d52; font-size: 15px; line-height: 1; filter: saturate(.82); box-shadow: 0 2px 7px #31524a14; }
+.toolbar-title { display: flex; align-items: center; gap: 9px; }
+.toolbar-title .topic-icon { width: 28px; height: 28px; flex-basis: 28px; border-radius: 9px; }
+.topic-icon.rocket { background: linear-gradient(145deg,#fff8eb,#f2e3c7); border-color: #e2c993; }
+.topic-icon.wrench { background: linear-gradient(145deg,#eef3ff,#dde5f6); border-color: #c2cde4; }
+.topic-icon.book { background: linear-gradient(145deg,#f3edff,#e5dbf4); border-color: #cfc0e3; }
+.topic-icon.magnify { background: linear-gradient(145deg,#eaf8f8,#d9eeee); border-color: #b7d9d7; }
+.topic-icon.person { background: linear-gradient(145deg,#fff1f0,#f4dddd); border-color: #e2c2c0; }
+.topic-icon.fireworks { background: linear-gradient(145deg,#fff7e9,#f4dfb7); border-color: #e1c48c; }
+@media (prefers-reduced-motion: no-preference) { .topic-icon { transition: transform .18s ease, box-shadow .18s ease; } .panel:hover .topic-icon { transform: translateY(-1px) rotate(-2deg); box-shadow: 0 5px 12px #31524a22; } }
