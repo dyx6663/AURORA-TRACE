@@ -32,6 +32,10 @@ class TodoListTests(unittest.TestCase):
     def test_invalid_index_is_safe(self):
         self.assertIsNone(self.todos.remove(9))
 
+    def test_negative_index_is_safe(self):
+        """Negative indexes must not address items outside the public contract."""
+        self.assertIsNone(self.todos.remove(-1))
+
 
 if __name__ == "__main__":
     unittest.main()

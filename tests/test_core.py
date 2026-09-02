@@ -81,6 +81,8 @@ class CoreSafetyTests(unittest.TestCase):
             self.tools.run_command("python -c print(1)")
         with self.assertRaises(ValueError):
             self.tools.run_command("python demo.py && echo unsafe")
+        with self.assertRaises(ValueError):
+            self.tools.run_command("python demo.py > output.txt")
 
     def test_contract_has_four_evidence_gates(self):
         contract = contract_for("fix a bug")

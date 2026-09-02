@@ -1,7 +1,10 @@
+# Python bytecode and local caches
 __pycache__/
 *.pyc
+# Runtime evidence and temporary project copies
 .runs/
 projects/
 projects.json
+# Local credentials and generated recordings
 .env
 *.mp4
