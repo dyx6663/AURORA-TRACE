@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">AURORA TRACE evidence sequence</title>
+  <desc id="desc">The model proposes an action, registry validates it, executor returns facts, ledger records them, and verifier gates completion.</desc>
+  <rect width="1200" height="520" rx="22" fill="#f6fbfa"/>
+  <text x="48" y="46" fill="#244b52" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">📖 One run, five cooperating roles</text>
+  <g font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-size="15" font-weight="700">
+    <g fill="#fff" stroke="#c9bde5"><rect x="55" y="80" width="170" height="48" rx="10"/><rect x="275" y="80" width="170" height="48" rx="10"/></g>
+    <g fill="#fff" stroke="#c4d1e5"><rect x="495" y="80" width="170" height="48" rx="10"/></g>
+    <g fill="#fff" stroke="#b8d7d1"><rect x="715" y="80" width="170" height="48" rx="10"/></g>
+    <g fill="#fff" stroke="#e1c58f"><rect x="935" y="80" width="170" height="48" rx="10"/></g>
+    <text x="140" y="111">🤖 Model</text><text x="360" y="111">🔧 Registry</text><text x="580" y="111">Local Executor</text><text x="800" y="111">📖 Ledger</text><text x="1020" y="111">🔍 Verifier</text>
+  </g>
+  <g stroke="#73858a" stroke-width="2" stroke-dasharray="6 6"><path d="M140 128 V450"/><path d="M360 128 V450"/><path d="M580 128 V450"/><path d="M800 128 V450"/><path d="M1020 128 V450"/></g>
+  <g stroke="#4f7178" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#4f7178"/></marker></defs>
+    <path d="M140 170 H350"/><path d="M360 235 H570"/><path d="M580 300 H790"/><path d="M800 365 H150"/><path d="M140 430 H1010"/>
+  </g>
+  <g fill="#3e6269" font-family="Segoe UI,Arial,sans-serif" font-size="14">
+    <text x="245" y="160">propose next action</text><text x="465" y="225">validate and execute</text><text x="685" y="290">result · diff · status</text><text x="460" y="355">structured observation</text><text x="550" y="420">propose finish / gate decision</text>
+  </g>
+</svg>

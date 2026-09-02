@@ -109,18 +109,7 @@ python -m unittest discover -s tests -v
 
 控制台会展示项目扫描、读取代码、形成基线、复现失败、应用补丁、重新测试、验收 Gate、证据时间线和 Replay。
 
-```mermaid
-flowchart LR
-    A[🚀 输入任务] --> B[🤖 Agent 决策]
-    B --> C{🔧 工具策略}
-    C -->|允许| D[本地执行器]
-    C -->|需要确认| E[👤 人工审批]
-    E -->|批准| D
-    D --> F[📖 Evidence Ledger]
-    F --> G[🔍 验收契约]
-    G -->|证据充分| H[🎉 完成 / 回放]
-    G -->|证据不足| B
-```
+![AURORA TRACE execution flow](assets/aurora-trace-flow.svg)
 
 一次运行不是“模型生成代码后直接结束”，而是一个可循环检查的控制路径：模型提出动作，执行器产生事实，证据账本保存事实，验收契约决定是否继续或结束。
 
@@ -153,21 +142,7 @@ flowchart LR
 - **验证**：基线状态、测试用例、验收 Gate 和最终状态；
 - **关系**：时间戳、运行编号和父事件，用于因果追踪与 Replay。
 
-```mermaid
-sequenceDiagram
-    participant M as 🤖 Model
-    participant R as 🔧 Registry
-    participant X as Local Executor
-    participant L as 📖 Ledger
-    participant V as 🔍 Verifier
-    M->>R: propose next action
-    R->>X: validate and execute
-    X-->>L: result + diff + status
-    L-->>M: structured observation
-    M->>V: propose finish
-    V-->>L: gate decision
-    L-->>V: evidence-backed completion
-```
+![AURORA TRACE evidence sequence](assets/aurora-trace-sequence.svg)
 
 ## ✅ Verification Model
 

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">AURORA TRACE execution flow</title>
+  <desc id="desc">Task input flows through agent decision, guarded tools, local execution, evidence ledger and verification before completion or another decision.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#f6fbfa"/><stop offset="1" stop-color="#eef4f7"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#183b4220"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#4f7178"/></marker>
+  </defs>
+  <rect width="1200" height="430" rx="22" fill="url(#bg)"/>
+  <text x="54" y="48" fill="#244b52" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">AURORA TRACE · evidence-first execution loop</text>
+  <g filter="url(#shadow)" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">
+    <g><rect x="54" y="130" width="180" height="80" rx="14" fill="#fff" stroke="#b8d7d1"/><text x="144" y="165" font-size="25">🚀</text><text x="144" y="190" fill="#244b52" font-size="16" font-weight="700">任务输入</text></g>
+    <g><rect x="282" y="130" width="180" height="80" rx="14" fill="#fff" stroke="#c9bde5"/><text x="372" y="165" font-size="25">🤖</text><text x="372" y="190" fill="#244b52" font-size="16" font-weight="700">Agent 决策</text></g>
+    <g><rect x="510" y="130" width="180" height="80" rx="14" fill="#fff" stroke="#c4d1e5"/><text x="600" y="165" font-size="25">🔧</text><text x="600" y="190" fill="#244b52" font-size="16" font-weight="700">工具策略</text></g>
+    <g><rect x="738" y="130" width="180" height="80" rx="14" fill="#fff" stroke="#b8d7d1"/><text x="828" y="165" font-size="25">📖</text><text x="828" y="190" fill="#244b52" font-size="16" font-weight="700">Evidence Ledger</text></g>
+    <g><rect x="966" y="130" width="180" height="80" rx="14" fill="#fff" stroke="#e1c58f"/><text x="1056" y="165" font-size="25">🔍</text><text x="1056" y="190" fill="#244b52" font-size="16" font-weight="700">验收契约</text></g>
+  </g>
+  <g stroke="#4f7178" stroke-width="2" fill="none" marker-end="url(#arrow)"><path d="M234 170 H278"/><path d="M462 170 H506"/><path d="M690 170 H734"/><path d="M918 170 H962"/></g>
+  <path d="M1056 210 C1056 305 372 330 372 214" stroke="#8b79bb" stroke-width="2" fill="none" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+  <text x="717" y="318" text-anchor="middle" fill="#6e5d9c" font-family="Segoe UI,Arial,sans-serif" font-size="14">证据不足 → 返回下一步决策</text>
+  <g><rect x="860" y="348" width="250" height="48" rx="24" fill="#e7f5e9" stroke="#b6d8bb"/><text x="985" y="378" text-anchor="middle" fill="#267247" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="700">🎉 证据充分 → 完成 / 回放</text></g>
+</svg>
