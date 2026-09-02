@@ -12,7 +12,6 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/Runtime-Standard%20Library-0f766e" alt="Standard library runtime">
   <img src="https://img.shields.io/badge/Agent%20Framework-None-7c3aed" alt="No agent framework">
-  <img src="https://img.shields.io/badge/Mode-Mock%20%2B%20Live-0891b2" alt="Mock and live modes">
   <img src="https://img.shields.io/badge/License-MIT-22c55e" alt="MIT License">
 </p>
 
@@ -28,6 +27,12 @@ AURORA TRACE 是一个面向软件工程任务的证据驱动型 Coding Agent �
 
 项目不依赖 LangChain、LlamaIndex、OpenAI Agents SDK 或其他 Agent 框架。模型只负责提出下一步动作；本地执行器负责文件与命令操作；验收器负责判断任务是否真正完成。
 
+## Problem and Design
+
+普通 Coding Agent 往往把重点放在“生成了什么补丁”，但软件工程任务还需要回答三个问题：Agent 为什么采取这一步、工具到底执行了什么、最终结果是否有依据。AURORA TRACE 将这三个问题直接写入运行时结构，而不是在任务结束后再拼接日志。
+
+一次运行由四类角色协作完成：模型提出下一步动作；Tool Registry 校验工具和参数；本地 Executor 执行文件与命令；Acceptance Contract 根据任务类型判断证据是否充分。每个动作都会产生带有父事件关系的结构化记录，形成“决策 → 工具 → 结果 → 验证”的因果链。
+
 ## Highlights
 
 - **Evidence Ledger** — 记录决策、工具调用、文件变化和测试结果。
@@ -35,8 +40,7 @@ AURORA TRACE 是一个面向软件工程任务的证据驱动型 Coding Agent �
 - **Replayable Run** — 独立 run workspace、Diff、事件流和运行历史。
 - **Verified Apply** — 验收通过后检查原项目状态，再写回最小已验证补丁并保留备份。
 - **Guarded Workspace** — 文件边界、命令白名单、审批和超时控制。
-- **Mock Demo** — 无需 API Key 即可演示“复现失败 → 修改 → 复测 → 验收通过”。
-- **OpenAI-compatible** — 支持 OpenAI 兼容网关和内置 Mock 模式。
+- **OpenAI-compatible** — 可连接 OpenAI 兼容模型接口，模型适配层与本地执行层解耦。
 
 ## Quick Start
 
@@ -47,7 +51,7 @@ cd aurora-trace
 python aurora.py
 ```
 
-打开 <http://127.0.0.1:8765>，选择内置 Todo 项目和 **Mock Demo**，点击 **开始受控运行 / Start Controlled Run**。
+打开 <http://127.0.0.1:8765>，选择项目和任务，点击 **开始受控运行 / Start Controlled Run**。
 
 真实模型模式：
 
@@ -70,6 +74,22 @@ python -m unittest discover -s tests -v
 ```
 
 控制台会展示项目扫描、读取代码、形成基线、复现失败、应用补丁、重新测试、验收 Gate、证据时间线和 Replay。
+
+## Verification Model
+
+验收契约不是固定的成功提示，而是随任务类型变化的验证策略：Bug 修复先要求观察修改前失败；功能新增、结构重构和一般变更先确认绿色基线。随后统一检查最小补丁、回归测试和工作区边界。只有真实命令结果进入证据账本后，完成状态才会被接受。
+
+## Safety and Scope
+
+每次运行都在隔离工作区中进行，原始项目不会被执行过程直接修改。文件访问不能越过工作区边界；命令执行使用白名单、`shell=False` 和超时控制；手动模式下，高风险操作需经过明确授权。项目用于研究可解释、可复现的工程 Agent 运行时，不宣称提供生产级沙箱或通用多智能体调度。
+
+## Testing
+
+核心安全与契约行为位于 `tests/`，可使用以下命令运行：
+
+```powershell
+python -m unittest discover -s tests -v
+```
 
 ## Architecture
 
